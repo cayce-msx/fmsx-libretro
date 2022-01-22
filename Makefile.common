@@ -29,6 +29,7 @@ SOURCES_C := \
 	$(EMULIB)/MCF.c \
 	$(LIBZ80)/Z80.c \
 	$(EMULIB)/I8255.c \
+	$(EMULIB)/IPS.c \
 	$(EMULIB)/YM2413.c \
 	$(EMULIB)/AY8910.c \
 	$(EMULIB)/SCC.c \

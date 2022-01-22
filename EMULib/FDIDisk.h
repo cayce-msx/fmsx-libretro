@@ -38,6 +38,7 @@ extern "C" {
 #define FMT_DDP    12      /* Coleco Adam tape               */  
 #define FMT_SAD    13      /* Sam Coupe disk                 */
 #define FMT_DSK    14      /* Generic raw disk image         */
+#define FMT_IPS    15      /* IPS patch format               */
 
 #define SEEK_DELETED (0x40000000)
 

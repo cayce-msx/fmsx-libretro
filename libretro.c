@@ -53,6 +53,7 @@ char *autotype=0;
 #define FLUSH_NEVER     0
 #define FLUSH_IMMEDIATE 1
 #define FLUSH_ON_CLOSE  2
+#define FLUSH_AS_PATCH  3
 static int disk_flush=FLUSH_NEVER;
 static bool phantom_disk = false;
 
@@ -534,7 +535,7 @@ void retro_set_environment(retro_environment_t cb)
       { "fmsx_autospace", "Use autofire on SPACE; No|Yes" },
       { "fmsx_allsprites", "Show all sprites; No|Yes" },
       { "fmsx_font", "Text font; standard|DEFAULT.FNT|ITALIC.FNT|INTERNAT.FNT|CYRILLIC.FNT|KOREAN.FNT|JAPANESE.FNT" },
-      { "fmsx_flush_disk", "Save changes to .dsk; Never|Immediate|On close" },
+      { "fmsx_flush_disk", "Save changes to .dsk; Never|Immediate|On close|As Patch" },
       { "fmsx_phantom_disk", "Create empty disk when none loaded; No|Yes" },
       { "fmsx_custom_keyboard_up", up_value},
       { "fmsx_custom_keyboard_down", down_value},
@@ -594,12 +595,27 @@ void retro_set_controller_port_device(unsigned port, unsigned device)
    }
 }
 
-void disk_flush_on_close(void)
+void flush_disk(void)
 {
-   if(disk_flush==FLUSH_ON_CLOSE && FDD[0].Dirty)
+   int R;
+
+   if(!FDD[0].Dirty)
+      return;
+
+   switch(disk_flush)
    {
-      SaveFDI(&FDD[0],DSKName_buffer,FMT_MSXDSK);
+   case FLUSH_ON_CLOSE:
+   case FLUSH_IMMEDIATE:
+      if ((R=SaveFDI(&FDD[0],DSKName_buffer,FMT_MSXDSK))!=FDI_SAVE_OK && log_cb)
+         log_cb(RETRO_LOG_ERROR, "Error saving %s as .DSK: code %d\n", DSKName[0], R);
+      FDD[0].Dirty = 0; // set to false anyway to prevent spamming
+      break;
+
+   case FLUSH_AS_PATCH:
+      if ((R=SaveFDI(&FDD[0],DSKName_buffer,filestream_exists(DSKName_buffer)?FMT_IPS:FMT_MSXDSK))!=FDI_SAVE_OK && log_cb)
+         log_cb(RETRO_LOG_ERROR, "Error saving %s as .IPS: code %d\n", DSKName[0], R);
       FDD[0].Dirty = 0;
+      break;
    }
 }
 
@@ -615,7 +631,7 @@ bool set_eject_state(bool ejected)
    disk_inserted = !ejected;
    if (!disk_inserted)
    {
-      disk_flush_on_close();
+      flush_disk();
       ChangeDisk(0, NULL);
    }
    return true;
@@ -1004,6 +1020,8 @@ static void check_variables(void)
          disk_flush=FLUSH_IMMEDIATE;
       else if (strcmp(var.value, "On close") == 0)
          disk_flush=FLUSH_ON_CLOSE;
+      else if (strcmp(var.value, "As Patch") == 0)
+         disk_flush=FLUSH_AS_PATCH;
    }
 
    var.key = "fmsx_autospace";
@@ -1248,7 +1266,7 @@ RETRO_CALLCONV void keyboard_event(bool down, unsigned keycode, uint32_t charact
       case RETROK_9:
          if (key_modifiers&RETROKMOD_CTRL && disk_inserted)
          {
-            disk_flush_on_close();
+            flush_disk();
             set_image_index(keycode-RETROK_1);
          }
          break;
@@ -1452,7 +1470,7 @@ void retro_unload_game(void)
    image_buffer_width = 0;
    image_buffer_height = 0;
 
-   disk_flush_on_close();
+   flush_disk();
 
    TrashMSX();
 }
@@ -1572,12 +1590,9 @@ void retro_run(void)
 
    fflush(stdout);
 
-   // debounce 1s before flushing to .dsk
-   if(disk_flush==FLUSH_IMMEDIATE && FDD[0].Dirty && ++FDD[0].Dirty >= fps)
-   {
-      SaveFDI(&FDD[0],DSKName_buffer,FMT_MSXDSK);
-      FDD[0].Dirty = 0;
-   }
+   // debounce 1s before flushing to .DSK or .IPS
+   if((disk_flush==FLUSH_IMMEDIATE||FLUSH_AS_PATCH) && FDD[0].Dirty && ++FDD[0].Dirty >= fps)
+      flush_disk();
 }
 
 unsigned retro_api_version(void) { return RETRO_API_VERSION; }

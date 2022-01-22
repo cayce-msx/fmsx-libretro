@@ -18,6 +18,7 @@
 #include "Floppy.h"
 #include "SHA1.h"
 #include "MCF.h"
+#include "IPS.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -2869,8 +2870,12 @@ byte *LoadROM(const char *Name,int Size,byte *Buf)
      }
   }
 
-  /* Done */
   rfclose(F);
+
+  /* Apply IPS if there is one */
+  ApplyIPS(Name, P, Size);
+
+  /* Done */
   return(P);
 }
 
@@ -2881,7 +2886,7 @@ byte *LoadROM(const char *Name,int Size,byte *Buf)
 int LoadCart(const char *FileName,int Slot,int Type)
 {
   int64_t Len;
-  int C1, C2, Pages, ROM64, BASIC;
+  int C1, C2, Pages, ROM64, BASIC, PatchedSize;
   byte *P,PS,SS;
   char *T;
   RFILE *F;
@@ -2977,6 +2982,10 @@ int LoadCart(const char *FileName,int Slot,int Type)
 
   /* Rewind file */
   filestream_rewind(F);
+
+  /* Size could increase */
+  PatchedSize=MeasureIPS(FileName);
+  if (Len<PatchedSize) Len=PatchedSize;
 
   /* Length in 8kB pages */
   Len = Len>>13;

@@ -15,6 +15,7 @@
 #include "libretro.h"
 
 #include "FDIDisk.h"
+#include "IPS.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -206,7 +207,7 @@ int LoadFDI(FDIDisk *D,const char *FileName,int Format)
 {
   byte Buf[256],*P,*DDir;
   const char *T;
-  int J,I,K,L,N;
+  int J,I,K,L,N,Size;
   RFILE *F;
 
   /* If just ejecting a disk, drop out */
@@ -262,6 +263,7 @@ int LoadFDI(FDIDisk *D,const char *FileName,int Format)
   if(rfseek(F,0,SEEK_END)<0) { rfclose(F);return(0); }
   if((J=rftell(F))<=0)       { rfclose(F);return(0); }
   filestream_rewind(F);
+  Size=J;
 
   switch(Format)
   {
@@ -590,6 +592,9 @@ int LoadFDI(FDIDisk *D,const char *FileName,int Format)
       FileName,D->Sides,D->Tracks,D->Sectors,D->SecSize
     );
 
+  /* Apply IPS if there is one */
+  ApplyIPS(FileName, FDI_DATA(P), Size);
+
   /* Done */
   rfclose(F);
   D->Data   = P;
@@ -627,6 +632,65 @@ static int SaveDSKData(FDIDisk *D,RFILE *F,int Sides,int Tracks,int Sectors,int 
       }
 
   /* Done */
+  return(Result);
+}
+
+static int SaveDSKDataAsIPS(const char* DskFileName,FDIDisk *D,int Sides,int Tracks,int Sectors,int SecSize)
+{
+  int J,I,K,Result;
+  int Off,Size = Sides*Tracks*Sectors*SecSize,IpsSize;
+  byte *OrigDskBuf, *DskBuf, *IpsData;
+  RFILE *F;
+  char *IpsFileName;
+
+  Result = FDI_SAVE_OK;
+
+  DskBuf = malloc(Size);
+  memset(DskBuf, 0, Size);
+
+  /* Scan through all tracks, sides, sectors */
+  for(J=0;J<Tracks;++J)
+    for(I=0;I<Sides;++I)
+      for(K=0;K<Sectors;++K)
+      {
+        /* Seek to sector and determine actual sector size */
+        byte *P = SeekFDI(D,I,J,I,J,K+1);
+        int   L = D->SecSize<SecSize? D->SecSize:SecSize;
+        /* Write sector to memory */
+        if(!P||!L)           { free(DskBuf);return(FDI_SAVE_FAILED); }
+        Off = P-FDI_DATA(D->Data);
+        memcpy(&DskBuf[Off],P,L);
+        /* Update result */
+        L = SecSize>L? FDI_SAVE_PADDED:SecSize<L? FDI_SAVE_TRUNCATED:FDI_SAVE_OK;
+        if(L<Result) Result=L;
+      }
+
+  /* read .dsk into memory */
+  if(!(F=rfopen(DskFileName,"rb")))     { free(DskBuf);return(FDI_SAVE_FAILED); }
+  if(rfseek(F,0,SEEK_END)<0) { free(DskBuf);rfclose(F);return(FDI_SAVE_FAILED); }
+  if((J=rftell(F))<=0)       { free(DskBuf);rfclose(F);return(FDI_SAVE_FAILED); }
+  J = J>Size? Size:J;
+  filestream_rewind(F);
+  OrigDskBuf = malloc(Size);
+  memset(OrigDskBuf, 0, Size);
+  rfread(OrigDskBuf,1,J,F);
+  rfclose(F);
+
+  /* create .ips/.IPS filename */
+  if (!(IpsFileName = GetIpsFileName(DskFileName)))         { free(OrigDskBuf);free(DskBuf);return(FDI_SAVE_FAILED); }
+
+  /* Write IPS */
+  if(!(F=rfopen(IpsFileName,"wb")))                         { free(OrigDskBuf);free(DskBuf);free(IpsFileName);return(FDI_SAVE_FAILED); }
+  free(IpsFileName);
+  if(!(IpsData=CreateIPS(OrigDskBuf,DskBuf,Size,&IpsSize))) { free(OrigDskBuf);free(DskBuf);return(FDI_SAVE_FAILED); }
+  if(rfwrite(IpsData,1,IpsSize,F)!=IpsSize)
+    Result=FDI_SAVE_FAILED;
+  rfclose(F);
+
+  /* Done */
+  free(OrigDskBuf);
+  free(DskBuf);
+  free(IpsData);
   return(Result);
 }
 
@@ -675,7 +739,7 @@ int SaveFDI(FDIDisk *D,const char *FileName,int Format)
 {
   byte S[256];
   int I,J,K,C,L,Result;
-  RFILE *F;
+  RFILE *F=NULL;
   byte *P,*T;
 
   if (!FileName) return(0);
@@ -687,7 +751,7 @@ int SaveFDI(FDIDisk *D,const char *FileName,int Format)
   if(!Format) Format=D->Format;
 
   /* Open file for writing */
-  if(!(F=rfopen(FileName,"wb"))) return(0);
+  if(Format!=FMT_IPS && !(F=rfopen(FileName,"wb"))) return(0);
 
   /* Assume success */
   Result = FDI_SAVE_OK;
@@ -763,6 +827,15 @@ int SaveFDI(FDIDisk *D,const char *FileName,int Format)
          unlink(FileName);
          return(0);
       }
+      break;
+
+    case FMT_IPS:
+      /* Must have uniform tracks */
+      if(!D->Sectors || !D->SecSize)
+         return(0);
+      Result = SaveDSKDataAsIPS(FileName,D,FDI_SIDES(D->Data),FDI_TRACKS(D->Data),D->Sectors,D->SecSize);
+      if(!Result)
+         return(0);
       break;
 
     case FMT_SAD:
@@ -924,7 +997,7 @@ int SaveFDI(FDIDisk *D,const char *FileName,int Format)
 
   /* Done */
   D->Dirty=0;
-  rfclose(F);
+  if(F) rfclose(F);
   return(Result);
 }
 
